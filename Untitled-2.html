@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>青少年心理测评系统</title>
+
+  <!-- Tailwind CDN for gentle responsive styling -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js for radar chart -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <!-- SheetJS (xlsx) for Excel 导出 -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
+  <style>
+    /* 温和关怀风格（针对手机优化） */
+    :root{--accent:#2a9d8f;--muted:#64748b;--bg:linear-gradient(180deg,#fbfdfd,#ffffff)}
+    html,body{height:100%;}
+    body{background:var(--bg);font-family:Inter,ui-sans-serif,system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;color:#123;}
+    .card{background:#fff;border-radius:14px;box-shadow:0 6px 18px rgba(20,40,50,0.06);}
+    .soft{color:#264653}
+    .small-note{font-size:0.86rem;color:var(--muted)}
+    label{user-select:none}
+    /* touched targets */
+    input[type=radio], input[type=text], button{touch-action:manipulation}
+    /* responsive tweaks */
+    @media(min-width:768px){ .layout-cols{display:grid;grid-template-columns:2fr 1fr;gap:1.25rem} }
+  </style>
+</head>
+<body class="p-4">
+  <div class="max-w-3xl mx-auto">
+    <header class="mb-4">
+      <h1 class="text-2xl font-semibold soft">青少年心理测评系统</h1>
+      <p class="small-note mt-1">温和关怀风 · 本地计算 · 支持手机和平板</p>
+    </header>
+
+    <main class="card p-4">
+      <div class="mb-3">
+        <label class="block small-note">姓名（用于导出文件名，可留空显示“匿名”）：</label>
+        <input id="username" type="text" placeholder="请输入姓名（可选）" class="w-full mt-1 p-2 border rounded" />
+      </div>
+
+      <div class="mb-4 layout-cols">
+        <section>
+          <div class="mb-3 flex items-center justify-between">
+            <div>
+              <label class="block font-medium">选择量表</label>
+              <p class="small-note">可在手机上操作，题目触控友好。</p>
+            </div>
+            <div class="flex gap-2">
+              <button id="save-local" class="px-3 py-2 rounded border small-note">保存本地</button>
+              <button id="reset-all" class="px-3 py-2 rounded border small-note">重置</button>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <select id="scale-select" class="w-full rounded border p-2">
+              <option value="CESD">CES-D（抑郁，20题）</option>
+              <option value="GAD7">GAD-7（焦虑，7题）</option>
+              <option value="PHQ9">PHQ-9（抑郁，9题）</option>
+            </select>
+          </div>
+
+          <form id="scale-form" class="space-y-3">
+            <div id="questions-container"></div>
+
+            <div class="flex gap-2 mt-2">
+              <button type="submit" class="flex-1 px-4 py-3 rounded" style="background:var(--accent);color:#fff">提交并生成报告</button>
+              <button id="export-xlsx" type="button" class="px-4 py-3 rounded border">导出 Excel</button>
+            </div>
+            <div id="form-note" class="small-note mt-2">提示：所有题目需作答。</div>
+          </form>
+        </section>
+
+        <aside class="p-2">
+          <div class="mb-3">
+            <h3 class="font-medium">测评报告</h3>
+            <div id="report-area" class="small-note mt-2 card p-3">尚未提交任何结果。</div>
+          </div>
+
+          <div>
+            <canvas id="radarChart" width="300" height="300"></canvas>
+          </div>
+        </aside>
+      </div>
+
+      <footer class="small-note text-right mt-3">本系统在本地运行，数据不上传服务器。</footer>
+    </main>
+  </div>
+
+<script>
+// 量表定义（题目文本为示例，可按需替换）
+const scales = {
+  CESD: {
+    id:'CESD', name:'CES-D（20题）', maxScore:60,
+    items:[
+      "我感到沮丧或情绪低落。","我感到不开心。","我觉得孤单。","我觉得比平常更快乐。（正向）","我感到无望。",
+      "我睡眠不好或睡不安稳。","我感到孤立无援。","我比平常更喜欢做事。（正向）","我难以放松。","我觉得别人对我不那么热情。",
+      "我觉得做事没有劲。","我比平常更多好心情。（正向）","我感到害怕或惊慌。","我觉得情绪影响了日常活动。","我觉得一切都很难坚持。",
+      "我比平常更能享受生活。（正向）","我感到疲倦或虚弱。","我的食欲比平常差。","我觉得自己不如别人。","我有想哭的冲动。"
+    ],
+    positiveIndexes:[4,8,12,16], // 1-based
+    options:["很少或没有（不到1天） — 0分","有时（1-2天） — 1分","经常（3-4天） — 2分","大多数/全部（5-7天） — 3分"]
+  },
+  GAD7: {
+    id:'GAD7', name:'GAD-7（7题）', maxScore:21,
+    items:["感到紧张、焦虑或坐立不安。","无法停止或控制担忧。","为不同的事情担忧过多。","难以放松。","由于紧张易怒。","难以控制让你不安的想法。","担心会出事或感到害怕。"],
+    options:["根本没有 — 0分","几天 — 1分","一半以上的天数 — 2分","几乎每天 — 3分"]
+  },
+  PHQ9: {
+    id:'PHQ9', name:'PHQ-9（9题）', maxScore:27,
+    items:["兴趣减退或对事物失去兴趣。","情绪低落、沮丧或绝望。","入睡困难或睡眠过多。","精力不足或疲倦。","食欲不振或暴饮暴食。","自我感觉不良或觉得自己失败。","难以集中注意力。","动作或说话变慢或非常不安。","有想死或伤害自己的念头。"],
+    options:["根本没有 — 0分","几天 — 1分","一半以上的天数 — 2分","几乎每天 — 3分"]
+  }
+};
+
+let submissions = []; // 存放最新每个量表的提交记录
+
+// DOM
+const scaleSelect = document.getElementById('scale-select');
+const questionsContainer = document.getElementById('questions-container');
+const scaleForm = document.getElementById('scale-form');
+const reportArea = document.getElementById('report-area');
+const exportBtn = document.getElementById('export-xlsx');
+const saveLocalBtn = document.getElementById('save-local');
+const resetBtn = document.getElementById('reset-all');
+const formNote = document.getElementById('form-note');
+const usernameInput = document.getElementById('username');
+
+// Chart
+let radarChart = null;
+function createRadarChart(){
+  const ctx = document.getElementById('radarChart').getContext('2d');
+  radarChart = new Chart(ctx,{
+    type:'radar',
+    data:{ labels:['CES-D','GAD-7','PHQ-9'], datasets:[{ label:'得分百分比', data:[0,0,0], fill:true, tension:0.3, pointRadius:4 }]},
+    options:{
+      responsive:true, maintainAspectRatio:true,
+      scales:{ r:{ suggestedMin:0, suggestedMax:100, ticks:{ stepSize:20 } } },
+      plugins:{ legend:{ display:false } },
+      elements:{ line:{ borderWidth:2, backgroundColor:'rgba(42,157,143,0.15)', borderColor:'#2a9d8f' }, point:{ backgroundColor:'#2a9d8f' } }
+    }
+  });
+}
+createRadarChart();
+
+function updateRadar(){
+  const latest = { CESD:0, GAD7:0, PHQ9:0 };
+  submissions.forEach(s => { latest[s.scaleId] = s.score; });
+  radarChart.data.datasets[0].data = [
+    Math.round((latest.CESD||0)/scales.CESD.maxScore*100),
+    Math.round((latest.GAD7||0)/scales.GAD7.maxScore*100),
+    Math.round((latest.PHQ9||0)/scales.PHQ9.maxScore*100)
+  ];
+  radarChart.update();
+}
+
+// render questions for selected scale
+function renderQuestions(scaleId){
+  const scale = scales[scaleId];
+  questionsContainer.innerHTML = '';
+  formNote.innerText = '';
+  const frag = document.createDocumentFragment();
+  const info = document.createElement('div');
+  info.className = 'mb-2 small-note';
+  info.innerHTML = `<strong>${scale.name}</strong> — 请选择最符合您最近一周的选项。`;
+  frag.appendChild(info);
+
+  scale.items.forEach((txt, idx) => {
+    const box = document.createElement('div');
+    box.className = 'mb-2 p-3 border rounded';
+    const lab = document.createElement('label');
+    lab.className = 'block font-medium mb-2';
+    lab.innerText = `${idx+1}. ${txt}`;
+    box.appendChild(lab);
+    const opts = document.createElement('div');
+    opts.className = 'grid grid-cols-2 gap-2';
+    scale.options.forEach((opt, oi) => {
+      const id = `${scaleId}-q${idx}-o${oi}`;
+      const wrapper = document.createElement('label');
+      wrapper.className = 'flex items-center gap-2 p-2 rounded hover:bg-gray-50 cursor-pointer';
+      const r = document.createElement('input');
+      r.type='radio'; r.name=`q-${idx}`; r.value=oi; r.id=id;
+      wrapper.appendChild(r);
+      const sp = document.createElement('span'); sp.className='small-note'; sp.innerText = opt;
+      wrapper.appendChild(sp);
+      opts.appendChild(wrapper);
+    });
+    box.appendChild(opts);
+    frag.appendChild(box);
+  });
+
+  questionsContainer.appendChild(frag);
+  formNote.innerText = '提示：请完整作答，完成后点击提交。';
+}
+
+scaleSelect.addEventListener('change', ()=> renderQuestions(scaleSelect.value));
+renderQuestions(scaleSelect.value);
+
+// scoring & interpretation
+function interpretResult(scaleId, score){
+  if(scaleId==='CESD'){
+    const text = score>=16 ? '分数较高，可能存在抑郁情绪倾向，建议关注情绪并寻求支持或专业评估。' : '分数较低，暂无明显抑郁提示。如感受不适建议与信任的人沟通。';
+    return { level: score>=16? '可能存在抑郁倾向':'未见明显抑郁倾向', text };
+  }
+  if(scaleId==='GAD7'){
+    if(score>=15) return { level:'重度焦虑', text:'分数较高，建议尽快寻求专业评估与支持。' };
+    if(score>=10) return { level:'中度焦虑', text:'可能存在中度焦虑，建议关注并采取应对措施。' };
+    if(score>=5) return { level:'轻度焦虑', text:'存在轻度焦虑，可尝试自助策略与支持。' };
+    return { level:'无明显焦虑', text:'未见明显焦虑提示。' };
+  }
+  if(scaleId==='PHQ9'){
+    if(score>=20) return { level:'重度抑郁', text:'得分较高，建议尽快寻求专业评估与干预。' };
+    if(score>=15) return { level:'中重度抑郁', text:'可能存在中重度抑郁，建议联系专业人员。' };
+    if(score>=10) return { level:'中度抑郁', text:'可能存在中度抑郁，建议关注并考虑寻求帮助。' };
+    if(score>=5) return { level:'轻度抑郁', text:'存在轻度抑郁，可尝试自助策略与身边支持。' };
+    return { level:'无明显抑郁', text:'未见明显抑郁提示。' };
+  }
+  return {level:'', text:''};
+}
+
+scaleForm.addEventListener('submit', function(e){
+  e.preventDefault();
+  const scaleId = scaleSelect.value;
+  const scale = scales[scaleId];
+  const answers = [];
+  let all = true;
+  for(let i=0;i<scale.items.length;i++){
+    const radios = document.getElementsByName(`q-${i}`);
+    let found=false;
+    for(const r of radios){ if(r.checked){ answers.push(Number(r.value)); found=true; break; } }
+    if(!found){ all=false; break; }
+  }
+  if(!all){ alert('请完成所有题目再提交。'); return; }
+
+  let score=0;
+  if(scaleId==='CESD'){
+    for(let i=0;i<answers.length;i++){
+      const one = answers[i];
+      const oneBased = i+1;
+      if(scale.positiveIndexes && scale.positiveIndexes.includes(oneBased)) score += (3-one);
+      else score += one;
+    }
+  } else score = answers.reduce((a,b)=>a+b,0);
+
+  const interpretation = interpretResult(scaleId, score);
+  const submission = { scaleId, scaleName:scale.name, timestamp:new Date().toISOString(), answers, score, interpretation };
+  const idx = submissions.findIndex(s=>s.scaleId===scaleId);
+  if(idx>=0) submissions[idx]=submission; else submissions.push(submission);
+  showReport(submission);
+  updateRadar();
+});
+
+function showReport(sub){
+  reportArea.innerHTML = '';
+  const h = document.createElement('div');
+  h.innerHTML = `<div class="font-medium">${sub.scaleName}</div><div class="small-note">提交：${new Date(sub.timestamp).toLocaleString()}</div>`;
+  reportArea.appendChild(h);
+  const box = document.createElement('div'); box.className='mt-2 p-2 border rounded';
+  box.innerHTML = `<div class="text-xl font-semibold">${sub.score}</div><div class="small-note mt-1">评估：${sub.interpretation.level}</div><div class="mt-2 small-note">${sub.interpretation.text}</div>`;
+  reportArea.appendChild(box);
+}
+
+// 保存本地
+saveLocalBtn.addEventListener('click', ()=>{
+  if(submissions.length===0){ alert('暂无提交记录。'); return; }
+  localStorage.setItem('psy_submissions', JSON.stringify(submissions));
+  alert('已保存到本地浏览器（localStorage）。');
+});
+
+// 重置
+resetBtn.addEventListener('click', ()=>{
+  if(!confirm('确认清除所有记录并重置？')) return;
+  submissions = []; reportArea.innerHTML='尚未提交任何结果。'; radarChart.data.datasets[0].data=[0,0,0]; radarChart.update(); localStorage.removeItem('psy_submissions');
+});
+
+// 导出 Excel：文件名格式 结果_用户名_日期.xlsx
+exportBtn.addEventListener('click', ()=>{
+  if(submissions.length===0){ alert('暂无提交记录可导出。'); return; }
+  const username = (usernameInput.value || '匿名').replace(/\\s+/g,'_');
+  const d = new Date();
+  const yyyy = d.getFullYear(); const mm = String(d.getMonth()+1).padStart(2,'0'); const dd = String(d.getDate()).padStart(2,'0');
+  const dateStr = `${yyyy}-${mm}-${dd}`;
+  const filename = `结果_${username}_${dateStr}.xlsx`;
+
+  const wb = XLSX.utils.book_new();
+  const summary = submissions.map(s=>({ 量表:s.scaleName, 标识:s.scaleId, 时间:s.timestamp, 总分:s.score, 评估:s.interpretation.level, 说明:s.interpretation.text }));
+  const ws = XLSX.utils.json_to_sheet(summary);
+  XLSX.utils.book_append_sheet(wb, ws, 'Summary');
+  submissions.forEach(s=>{
+    const rows = s.answers.map((a,i)=>({ 题号:i+1, 答案分值:a }));
+    const w = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, w, s.scaleId);
+  });
+  XLSX.writeFile(wb, filename);
+});
+
+// 加载 localStorage（如果存在）
+(function loadSaved(){
+  const raw = localStorage.getItem('psy_submissions');
+  if(raw){ try{ const arr = JSON.parse(raw); if(Array.isArray(arr) && arr.length>0){ if(confirm('检测到本地保存的测评记录，是否载入？')){ submissions = arr; showReport(submissions[submissions.length-1]); updateRadar(); } } }catch(e){} }
+})();
+
+</script>
+</body>
+</html>
